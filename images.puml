@@ -1,0 +1,682 @@
+@startuml "1.1_何を作るのか"
+left to right direction
+' スタイル設定
+skinparam shadowing false
+skinparam monochrome false
+skinparam packageStyle rectangle
+
+' ユースケースの基本スタイル
+skinparam usecase {
+    BackgroundColor LightYellow
+    BorderColor DarkGoldenRod
+    ArrowColor DarkGoldenRod
+}
+
+' 全体の枠線のスタイル
+skinparam rectangle {
+    BorderColor SteelBlue
+    BackgroundColor WhiteSmoke
+}
+
+' アクターの色定義（人間とシステムで分ける）
+actor "メンティ" as mentee #Coral
+actor "担当者" as staff #Coral
+actor "システム (GAS)" as gas #MediumPurple
+actor "タイマー (定刻)" as timer <<Clock>> #MediumPurple
+
+rectangle "SES日報自動化ツール" {
+    
+    ' 入力フェーズ：緑系
+    rectangle "入力・蓄積フェーズ" #E8F5E9 {
+        usecase "日報を定型フォーマットで入力する\n(Googleフォーム)" as input
+        usecase "回答データを個人用シートへ蓄積する" as store
+        input .> store : <<include>>
+    }
+
+    ' 自動集約フェーズ：青系
+    rectangle "自動集約・整形フェーズ" #E3F2FD {
+        usecase "集約処理を実行する\n(手動/定刻)" as run_aggr
+        usecase "未処理データを抽出する" as extract
+        usecase "二重取り込みを防止する\n(冪等性の担保)" as prevent_double
+        usecase "集約用シートへデータを転記する" as transfer
+        usecase "報告用下書きを自動生成する\n(フォーマット整形)" as draft
+        usecase "不備データを検知しエラー記録する" as error_log
+
+        run_aggr ..> extract : <<include>>
+        extract ..> prevent_double : <<include>>
+        extract ..> transfer : <<include>>
+        transfer ..> draft : <<include>>
+        extract <.. error_log : <<extend>>
+    }
+
+    ' 確認フェーズ：赤系
+    rectangle "確認・管理フェーズ" #FCE4EC {
+        usecase "下書き内容を確認・修正する" as check_draft
+        usecase "認識齟齬・進捗リスクを精査する" as risk_check
+        usecase "送信完了を記録・可視化し\n進捗を管理する" as manage_status
+
+        check_draft .> risk_check : <<include>>
+    }
+}
+
+' アクターとの紐付け
+mentee -- input
+staff -- run_aggr
+staff -- check_draft
+staff -- manage_status
+
+timer -- run_aggr
+gas -- run_aggr
+gas -- extract
+gas -- transfer
+gas -- draft
+gas -- manage_status
+
+@enduml
+
+
+
+
+
+@startuml "1.2_なぜ作るのか"
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+' カラー定義
+skinparam usecase {
+    BackgroundColor LightYellow
+    BorderColor DarkGoldenRod
+}
+
+rectangle "SES日報自動化ツール 要件定義 (Why)" {
+
+    ' 1. 事故の未然防止
+    rectangle "1. 事故の未然防止 (リスクヘッジ)" #E8F5E9 {
+        usecase "統一フォームから入力する\n(手作業・コピペの排除)" as unity
+        usecase "未処理データのみを抽出する\n(二重計上・取り込みミスの防止)" as extract
+        usecase "不備データをエラー記録する\n(データの整合性・堅牢性の確保)" as error_check
+        usecase "送信完了管理により\n誤送信・重複送信を防止する" as prevent_miss
+    }
+
+    ' 2. 確認・集計コストの削減
+    rectangle "2. 確認・集計コストの削減" #E3F2FD {
+        usecase "修正・確認が必要な箇所を特定する\n(チェック時間の短縮)" as identify
+        usecase "報告下書きを自動生成する\n(集計・整形の時間をゼロへ)" as draft
+        
+        draft ..> extract : <<include>>
+    }
+
+    ' 3. 認識齟齬の早期発見
+    rectangle "3. 認識齟齬の早期発見" #FCE4EC {
+        usecase "提出状況(未提出/遅延)を確認する\n(状況の可視化)" as status
+        usecase "内容の妥当性・進捗を精査する\n(早期アクションの実施)" as scrutiny
+        
+        scrutiny ..> identify : <<precedes>>
+    }
+}
+
+' アクター定義
+actor "メンティ" as mentee #Coral
+actor "担当者" as staff #Coral
+actor "システム (GAS)" as gas #MediumPurple
+
+' 関連
+mentee -- unity
+staff -- status
+staff -- scrutiny
+staff -- prevent_miss
+
+gas -- extract
+gas -- error_check
+gas -- draft
+gas -- prevent_miss
+
+@enduml
+
+
+
+
+
+@startuml "1.3_今回解決したいこと"
+skinparam shadowing false
+skinparam monochrome false
+skinparam ActivityBackgroundColor White
+skinparam ActivityBorderColor SlateGray
+skinparam NoteBackgroundColor LightYellow
+skinparam NoteBorderColor DarkGoldenRod
+
+|#E8F5E9|メンティ|
+start
+:Googleフォームにアクセス;
+partition "1. 表記揺れと非効率の解消" {
+    :選択式UI (プルダウン/ラジオボタン) で入力;
+    note right
+        【解決】自由記述による
+        表記揺れを根本から排除
+    end note
+    :作業内容・実績を送信;
+}
+
+|#E3F2FD|システム (GAS)|
+partition "2. ヒューマンエラーと事故リスクの排除" {
+    :個人用シートの「未処理データ」をスキャン;
+    if (有効な日付・必須項目があるか?) then (yes)
+        :「未処理」行のみを特定;
+        note left
+            【解決】重複取り込みや
+            再送リスクをシステム的に防止
+        end note
+        :報告用フォーマットへ自動整形;
+        :集約用シートへ下書きを書き込み;
+        :元データに「済」マークを付与;
+    else (no)
+        :エラーログを記録;
+        stop
+    endif
+}
+
+|#FCE4EC|担当者|
+partition "3. 認識齟齬の早期発見と品質担保" {
+    :集約用シートで「自動生成された下書き」を確認;
+    note right
+        【解決】転記作業がゼロになり、
+        内容の精査に全リソースを集中できる
+    end note
+    fork
+        :進捗状況の妥当性を確認;
+    fork again
+        :クライアントの期待値とのズレを精査;
+    fork again
+        :遅延の兆候やリスクを検知;
+    end fork
+
+    if (修正やフィードバックが必要?) then (yes)
+        :下書きを修正 / メンティへ指導;
+    else (no)
+    endif
+    :クライアントへ報告送信;
+    :「送信済」チェックボックスをON;
+}
+stop
+@enduml
+
+
+
+
+
+@startuml "2.1_日報がどのように流れるか"
+' --- 基本設定 ---
+skinparam monochrome false
+skinparam shadowing false
+skinparam defaultFontName "Hiragino Sans"
+top to bottom direction
+
+' --- 外部実体 (アクター) ---
+actor "メンティ" as mentee #C0D8E0
+actor "担当者" as staff #A2D5AB
+rectangle "クライアント" as client #FFFF00
+
+' --- データストア ---
+database "D1: 個人用\nスプレッドシート" as d1
+database "D2: 集約用\nスプレッドシート" as d2
+
+' --- システムプロセス ---
+rectangle "システムプロセス (GAS含む)" {
+    usecase "1.0\n日報入力" as p1
+    usecase "2.0\nデータ集約・整形" as p2
+    usecase "3.0\n確認・監査" as p3
+    usecase "4.0\n報告提出" as p4
+    
+    ' 縦並びを強制するための隠し要素
+    p1 -[hidden]down- p2
+    p2 -[hidden]down- p3
+    p3 -[hidden]down- p4
+}
+
+' --- Step1: 【入力】 ---
+mentee --> p1 : 作業内容・時間
+p1 --> d1 : 生のデータ(蓄積)
+
+' --- Step2: 【集約・加工】 ---
+d1 --> p2 : 未処理データ抽出
+p2 --> d2 : 報告用下書き
+p2 ..> d1 : 済マーク付与(二重処理防止)
+
+' --- Step3: 【確認・監査】 ---
+d2 <--> p3 : 下書きの取得・修正
+staff --> p3 : 認識齟齬・進捗精査
+
+' --- Step4: 【提出】 ---
+staff --> p4 : 送信実行
+p4 <- d2 : 確認済みデータ
+p4 ..> d2 : 送信済チェックON
+p4 --> client : 報告メッセージ
+@enduml
+
+
+
+
+
+@startuml "2.2_人がやること／自動でやることのイメージ"
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+skinparam ActivityBackgroundColor White
+
+|#E8F5E9|メンティ: 事実の入力|
+start
+:Googleフォームより日報を入力;
+note right
+    今日の作業実績・時間・課題など
+    「質の高い一次情報」を提供
+end note
+:個人用シートへ回答を蓄積;
+
+|#E3F2FD|システム (GAS): 定型作業と整合性|
+partition "Step2: 自動集約・加工" {
+    :個人用シートを巡回;
+    :「未処理 (チェックなし)」データを抽出;
+    if (日付あり 且つ 必須項目あり?) then (yes)
+        :クライアント用フォーマットへ整形;
+        :集約用シートへ「下書き」を書き込み;
+        :個人用シートに「処理済」チェックを付与;
+        note left: 【冪等性】二重計上の防止
+    else (no)
+        :集約用シートに「エラー情報」を記録;
+        note right: 担当者が不備を見落とさないよう明示
+    endif
+}
+
+|#FCE4EC|担当者: 内容の責任・判断|
+partition "Step3&4: 確認・提出" {
+    :集約用シートで自動生成された下書きを確認;
+    fork
+        :進捗に無理がないか判断;
+    fork again
+        :クライアント意図とのズレを精査;
+    end fork
+    
+    if (修正・指導が必要?) then (yes)
+        :メンティへの指導 / 報告内容の修正;
+    else (no)
+    endif
+    
+    :クライアントへ手動送信;
+    note right: メールやチャット(システム外)
+    :集約用シートの「送信済」チェックをON;
+}
+stop
+@enduml
+
+
+
+
+
+@startuml "2.3_完成形のイメージ"
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+
+[*] --> 入力待ち : フォームアクセス
+
+state "Googleフォーム：入力中" as entering {
+    state "ラジオボタン・プルダウンによる選択" as select_ui
+    note right of select_ui : 【見た目】\n自由記述を減らし、\n表記揺れを根本から排除
+}
+
+入力待ち --> entering : メンティが記入開始
+
+state "個人用シート：未処理" as unprocessed {
+    state "システム処理用チェック：OFF" as check_off
+    note right of check_off : 【状態】\n集約対象として可視化
+}
+
+entering --> unprocessed : 送信ボタン押下
+
+state "集約用シート：下書き状態" as draft {
+    state "整形済みデータの保持" as formatted {
+        note bottom : 保持項目：\n日付、作業内容、進捗、課題
+    }
+    state "担当者による認識齟齬の精査" as staff_check
+    formatted --> staff_check
+}
+
+unprocessed --> draft : GASによる自動集約実行\n**遷移条件:**\n・日付/必須項目が有効である\n・個人用チェックを**ON**へ更新
+
+state "集約用シート：送信完了" as completed {
+    state "送信済チェック：ON" as sent_check
+    note right of sent_check : 【状態】\n業務完了（可視化）
+}
+
+draft --> completed : クライアントへ送信\n**遷移条件:**\n・担当者による手動送信\n・送信済チェックを**ON**へ更新
+
+completed --> [*] : 記録完了
+@enduml
+
+
+
+
+
+@startuml "3.1_メンティが使うもの"
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+
+' 入口
+[*] --> input_area : アクセス
+
+state "1. 日報入力用 Googleフォーム" as google_form {
+    state "入力・選択画面" as input_area {
+        input_area : ・日付 (カレンダー選択)
+        input_area : ・案件名 (管理者配布URLより自動入力)
+        input_area : ・作業時間 (プルダウン選択)
+        input_area : ・進捗ステータス (ラジオボタン)
+    }
+    
+    state check <<choice>>
+    
+    input_area --> check : 送信ボタン押下
+    check --> input_area : [未入力あり] 警告表示
+    
+    note right of check : 必須項目（日付・作業内容等）の\n入力漏れをチェックし、後工程の\nエラーを防止する
+}
+
+state "送信完了画面" as success_screen {
+    success_screen : 「回答を記録しました」
+}
+
+google_form --> success_screen : [入力完了] データ送信
+
+state "2. 個人用スプレッドシート" as personal_sheet {
+    state "提出履歴参照画面" as history_view {
+        history_view : ・過去の送信結果をリスト形式で表示
+        history_view : ・システム処理状況（チェック有無）の確認
+    }
+}
+
+success_screen --> history_view : 自分の提出履歴を確認する
+history_view --> [*]
+
+@enduml
+
+
+
+
+
+@startuml "3.2_集約して管理するもの"
+' スタイル設定
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+skinparam class {
+    BackgroundColor White
+    ArrowColor DimGray
+    BorderColor Black
+}
+
+' エンティティ定義
+entity "個人用スプレッドシート\n(Personal_Daily_Reports)" as d1 {
+    + ID [PK] : 識別ID
+    --
+    * 送信タイムスタンプ : 日時
+    * 報告対象日 : 日付 [必須]
+    * 案件名 : 文字列
+    * 作業内容 : 文字列
+    * 作業時間 : 数値
+    * GitHubコミット : 文字列
+    * 次回作業日 : 文字列
+    * 課題・相談 : 文字列
+    --
+    * **システム処理用チェック** : 真偽値
+      (OFF: 未処理 / ON: 集約済み)
+}
+
+entity "集約用スプレッドシート\n(Aggregated_Report_Drafts)" as d2 {
+    + ID [PK] : 識別ID
+    + 元データID [FK] : 個人用シートへの参照
+    --
+    * メンティ氏名 : 文字列
+    * 報告用件名 : 文字列
+    * 報告用本文 : 文字列
+      (整形済み下書きテキスト)
+    --
+    * **送信済チェック** : 真偽値
+      (OFF: 未送信 / ON: 完了)
+    * **エラー情報** : 文字列
+      (データ不備等の詳細を記録)
+}
+
+' リレーションシップ
+d1 ||-o| d2 : 1対0..1 で集約
+
+' 注釈
+note right of d1
+    **冪等性の確保:**
+    GAS実行時、「処理用チェック」が
+    OFFの行のみを抽出対象とする。
+end note
+
+note bottom of d2
+    **独立性の保持:**
+    下書きを編集しても
+    個人用シートのデータには影響しない。
+end note
+
+@enduml
+
+
+
+
+
+@startuml "3.3_最終的に確認するもの"
+' スタイル設定
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+skinparam ActivityBackgroundColor #FFF9E3
+skinparam ActivityBorderColor #D32F2F
+skinparam ArrowColor #B71C1C
+
+start
+:集約用スプレッドシートの\n「報告用下書き」を確認;
+
+partition "Step1: 認識齟齬の最終確認" {
+    fork
+        :進捗の整合性を確認\n(スケジュールとの乖離チェック);
+    fork again
+        :リスクの検知\n(遅延の兆候・技術的行き詰まり);
+    end fork
+
+    if (内容の修正やメンティへの\nフィードバックが必要か?) then (yes)
+        :下書きを修正 / メンティへ指導;
+    else (no)
+    endif
+}
+
+partition "Step2: 形式と整合性の確認" {
+    fork
+        :データの欠落チェック\n(空欄・システムエラーの有無);
+    fork again
+        :日時の正当性確認\n(日付と曜日の整合性);
+    end fork
+}
+
+partition "Step3: 送信と完了記録" {
+    :下書きテキストをコピー;
+    :クライアントへ報告を送信\n(メール・チャット等);
+    :集約用スプレッドシートの\n「送信済」チェックボックスをON;
+}
+
+:当日の日報業務完了;
+stop
+@enduml
+
+
+
+
+
+@startuml "4.1_メンティが日報を書く"
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+
+' 入口
+[*] --> input_area : アクセス
+
+state "1. 日報入力用 Googleフォーム" as google_form {
+    state "入力・選択画面" as input_area {
+        input_area : ・日付 (カレンダー選択)
+        input_area : ・案件名 (管理者配布URLより自動入力)
+        input_area : ・作業内容 (自由記述) /' ←追加：テキスト要件に合わせる '/
+        input_area : ・作業時間 (プルダウン選択)
+        input_area : ・進捗ステータス (ラジオボタン)
+    }
+    
+    state check <<choice>>
+    
+    input_area --> check : 送信ボタン押下
+    check --> input_area : [未入力あり] 警告表示
+    
+    note right of check : 必須項目（日付・作業内容等）の\n入力漏れをチェックし、後工程の\nエラーを防止する
+}
+
+state "送信完了画面" as success_screen {
+    success_screen : 「回答を記録しました」
+}
+
+google_form --> success_screen : [入力完了] データ送信
+
+state "2. 個人用スプレッドシート" as personal_sheet {
+    state "提出履歴参照画面" as history_view {
+        history_view : ・過去の送信結果をリスト形式で表示
+        history_view : ・システム処理状況（チェック有無：空欄/OFF）の確認
+    }
+}
+
+success_screen --> history_view : 自分の提出履歴を確認する
+history_view --> [*]
+
+@enduml
+
+
+
+
+
+@startuml "4.2_システムによる自動集約と下書き生成"
+' スタイル設定
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+skinparam ActivityBackgroundColor #F0F7FF
+skinparam ActivityBorderColor #00529B
+
+start
+:定刻トリガー または 担当者の手動操作により起動;
+
+partition "1. データ抽出 (個人用シートの巡回)" {
+    :個人用スプレッドシートを巡回;
+    :「日付あり」かつ「未チェック」の行を抽出対象として特定;
+    note right: 冪等性の確保：\n二重取り込みを確実に防止する
+}
+
+' ループ構造の表現
+while (抽出された未処理行が残っているか?) is (Yes)
+    partition "2. データ検証とハンドリング" {
+        :該当行のデータを取得;
+        if (必須項目に不足や不備があるか?) then (Yes [不備あり])
+            :集約用シートへ「データ不備あり」とエラー情報を記録;
+            note left: 担当者が不備を見落とさないよう\n処理対象外であることを明示する
+            :当該行の集約処理をスキップ;
+        else (No [正常])
+            partition "3. 整形と出力" {
+                :指定のフォーマットにデータを整形;
+                :集約用シートへ「報告下書き」を書き込み;
+                :個人用シートのチェックボックスを「ON（処理済）」に変更;
+            }
+        endif
+    }
+    :次の行へ移動;
+endwhile (No)
+
+:全該当行の処理を完了;
+stop
+@enduml
+
+
+
+
+
+@startuml "4.3_担当者による内容確認と修正"
+' スタイル設定
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+' 担当者パートのイメージカラー
+skinparam ActivityBackgroundColor #FFF5F5
+skinparam ActivityBorderColor #C62828
+
+start
+:集約用スプレッドシートを開く;
+
+partition "内容の精査 (品質担保とリスク検知)" {
+    :自動生成された「報告用下書き」を読み取る;
+    
+    fork
+        :内容の整合性を判断;
+        note right: メンティの報告内容と\nクライアントの認識に\nズレがないかを確認
+    fork again
+        :リスク・不備の確認;
+        note right: ・進捗の遅れ\n・不適切な表現\n・誤字脱字の有無
+    end fork
+}
+
+if (修正やメンティへのフィードバックが必要?) then (Yes)
+    :集約用シート上の下書きを直接編集する;
+    note right
+        **独立性の保持:**
+        ここで編集しても個人用シートの
+        元データには影響しないため
+        安心して修正が可能
+    end note
+    :必要に応じてメンティへ指導を行う;
+else (No)
+    :生成された内容をそのまま採用;
+endif
+
+:最終的な報告内容を確定させる;
+stop
+@enduml
+
+
+
+
+
+@startuml "4.4_クライアントへの提出と完了記録"
+' スタイル設定
+skinparam shadowing false
+skinparam monochrome false
+skinparam defaultFontName "Hiragino Sans"
+' 提出プロセスのイメージカラー（青系）
+skinparam ActivityBackgroundColor #F0F7FF
+skinparam ActivityBorderColor #00529B
+
+start
+:集約用スプレッドシートの内容が\n問題ないことを最終確認する;
+
+partition "報告の提出 (システム外ツール)" {
+    :確定した下書きのテキストをコピーする;
+    :メールやチャットツールを起動する;
+    :報告用メッセージを貼り付け、クライアントへ送信する;
+    note right: ※誤送信防止のため、\nこの工程は担当者が手動で実施する
+}
+
+partition "業務完了の記録 (集約用シート)" {
+    :集約用スプレッドシートに戻る;
+    :該当行の「送信済チェックボックス」をONにする;
+    note right: 未送信データの有無を\n一目でわかる状態にする
+}
+
+:その日の日報業務を完了とする;
+stop
+@enduml
